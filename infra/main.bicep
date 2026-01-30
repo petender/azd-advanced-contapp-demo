@@ -21,7 +21,10 @@ param location string
 param resourceGroupName string = ''
 
 @description('Tags to apply to all resources')
-param tags object = {}
+param tags object = {
+  'azd-env-name': environmentName
+  SecurityControl: 'Ignore'
+}
 
 // Container Apps specific parameters
 @description('Minimum replicas for container apps (0 enables scale-to-zero)')

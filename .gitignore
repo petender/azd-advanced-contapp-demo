@@ -46,3 +46,7 @@ Thumbs.db
 
 # Docker
 *.tar
+
+# GitHub Copilot Agents
+.github/agents
+.github/prompts
