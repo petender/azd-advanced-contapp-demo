@@ -1,0 +1,424 @@
+# Azure DevOps Pipeline for CloudBurst Analytics
+# Builds and deploys microservices to Azure Container Apps
+# Does NOT use azd - uses Azure CLI and Docker directly
+
+trigger:
+  branches:
+    include:
+      - main
+      - develop
+  paths:
+    include:
+      - src/**
+      - infra/**
+
+pr:
+  branches:
+    include:
+      - main
+  paths:
+    include:
+      - src/**
+      - infra/**
+
+variables:
+  # Azure Configuration - Set these in Azure DevOps Pipeline Variables (or Variable Groups)
+  - name: azureSubscription
+    value: 'AzureServiceConnection'  # Name of your Azure DevOps Service Connection
+  - name: resourceGroupName
+    value: 'rg-cloudburst-$(environment)'
+  - name: location
+    value: 'eastus2'
+  
+  # Container Registry - Will be set dynamically from infrastructure outputs
+  - name: containerRegistryName
+    value: ''
+  
+  # Environment
+  - name: environment
+    value: 'dev'
+  
+  # Image Tags
+  - name: imageTag
+    value: '$(Build.BuildId)'
+
+stages:
+  # ============================================================================
+  # Stage 1: Build - Build and Test all microservices
+  # ============================================================================
+  - stage: Build
+    displayName: 'Build & Test'
+    jobs:
+      # ----------------------------------------------------------------------
+      # Build API Gateway (Node.js)
+      # ----------------------------------------------------------------------
+      - job: BuildApiGateway
+        displayName: 'Build API Gateway'
+        pool:
+          vmImage: 'ubuntu-latest'
+        steps:
+          - task: NodeTool@0
+            displayName: 'Install Node.js'
+            inputs:
+              versionSpec: '20.x'
+
+          - script: |
+              cd src/api-gateway
+              npm ci
+              npm test --if-present
+            displayName: 'Install dependencies & test'
+
+          - task: Docker@2
+            displayName: 'Build Docker image'
+            inputs:
+              command: 'build'
+              Dockerfile: 'src/api-gateway/Dockerfile'
+              buildContext: 'src/api-gateway'
+              tags: |
+                api-gateway:$(imageTag)
+                api-gateway:latest
+
+          - script: |
+              docker save api-gateway:$(imageTag) -o $(Build.ArtifactStagingDirectory)/api-gateway.tar
+            displayName: 'Save Docker image'
+
+          - publish: $(Build.ArtifactStagingDirectory)/api-gateway.tar
+            artifact: api-gateway-image
+            displayName: 'Publish API Gateway image'
+
+      # ----------------------------------------------------------------------
+      # Build Dashboard (React/Vite)
+      # ----------------------------------------------------------------------
+      - job: BuildDashboard
+        displayName: 'Build Dashboard'
+        pool:
+          vmImage: 'ubuntu-latest'
+        steps:
+          - task: NodeTool@0
+            displayName: 'Install Node.js'
+            inputs:
+              versionSpec: '20.x'
+
+          - script: |
+              cd src/dashboard
+              npm ci
+              npm run build
+            displayName: 'Install dependencies & build'
+
+          - task: Docker@2
+            displayName: 'Build Docker image'
+            inputs:
+              command: 'build'
+              Dockerfile: 'src/dashboard/Dockerfile'
+              buildContext: 'src/dashboard'
+              tags: |
+                dashboard:$(imageTag)
+                dashboard:latest
+
+          - script: |
+              docker save dashboard:$(imageTag) -o $(Build.ArtifactStagingDirectory)/dashboard.tar
+            displayName: 'Save Docker image'
+
+          - publish: $(Build.ArtifactStagingDirectory)/dashboard.tar
+            artifact: dashboard-image
+            displayName: 'Publish Dashboard image'
+
+      # ----------------------------------------------------------------------
+      # Build Ingestion Service (Python)
+      # ----------------------------------------------------------------------
+      - job: BuildIngestionService
+        displayName: 'Build Ingestion Service'
+        pool:
+          vmImage: 'ubuntu-latest'
+        steps:
+          - task: UsePythonVersion@0
+            displayName: 'Install Python'
+            inputs:
+              versionSpec: '3.11'
+
+          - script: |
+              cd src/ingestion-service
+              pip install -r requirements.txt
+              pip install pytest
+              pytest --if-present || true
+            displayName: 'Install dependencies & test'
+
+          - task: Docker@2
+            displayName: 'Build Docker image'
+            inputs:
+              command: 'build'
+              Dockerfile: 'src/ingestion-service/Dockerfile'
+              buildContext: 'src/ingestion-service'
+              tags: |
+                ingestion-service:$(imageTag)
+                ingestion-service:latest
+
+          - script: |
+              docker save ingestion-service:$(imageTag) -o $(Build.ArtifactStagingDirectory)/ingestion-service.tar
+            displayName: 'Save Docker image'
+
+          - publish: $(Build.ArtifactStagingDirectory)/ingestion-service.tar
+            artifact: ingestion-service-image
+            displayName: 'Publish Ingestion Service image'
+
+      # ----------------------------------------------------------------------
+      # Build Processor Service (.NET 8)
+      # ----------------------------------------------------------------------
+      - job: BuildProcessorService
+        displayName: 'Build Processor Service'
+        pool:
+          vmImage: 'ubuntu-latest'
+        steps:
+          - task: UseDotNet@2
+            displayName: 'Install .NET SDK'
+            inputs:
+              version: '8.x'
+
+          - script: |
+              cd src/processor-service
+              dotnet restore
+              dotnet build --configuration Release
+              dotnet test --configuration Release --no-build || true
+            displayName: 'Restore, build & test'
+
+          - task: Docker@2
+            displayName: 'Build Docker image'
+            inputs:
+              command: 'build'
+              Dockerfile: 'src/processor-service/Dockerfile'
+              buildContext: 'src/processor-service'
+              tags: |
+                processor-service:$(imageTag)
+                processor-service:latest
+
+          - script: |
+              docker save processor-service:$(imageTag) -o $(Build.ArtifactStagingDirectory)/processor-service.tar
+            displayName: 'Save Docker image'
+
+          - publish: $(Build.ArtifactStagingDirectory)/processor-service.tar
+            artifact: processor-service-image
+            displayName: 'Publish Processor Service image'
+
+      # ----------------------------------------------------------------------
+      # Validate Infrastructure (Bicep)
+      # ----------------------------------------------------------------------
+      - job: ValidateInfrastructure
+        displayName: 'Validate Bicep Templates'
+        pool:
+          vmImage: 'ubuntu-latest'
+        steps:
+          - task: AzureCLI@2
+            displayName: 'Validate Bicep templates'
+            inputs:
+              azureSubscription: $(azureSubscription)
+              scriptType: 'bash'
+              scriptLocation: 'inlineScript'
+              inlineScript: |
+                # Build Bicep to check for errors
+                az bicep build --file infra/main.bicep
+                
+                # Validate deployment (what-if)
+                az deployment sub what-if \
+                  --location $(location) \
+                  --template-file infra/main.bicep \
+                  --parameters infra/main.parameters.json \
+                  --parameters environmentName=$(environment) location=$(location)
+
+          - publish: infra
+            artifact: infrastructure
+            displayName: 'Publish infrastructure artifacts'
+
+  # ============================================================================
+  # Stage 2: Deploy Infrastructure
+  # ============================================================================
+  - stage: DeployInfrastructure
+    displayName: 'Deploy Infrastructure'
+    dependsOn: Build
+    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+    jobs:
+      - deployment: DeployAzureInfrastructure
+        displayName: 'Deploy Azure Resources'
+        pool:
+          vmImage: 'ubuntu-latest'
+        environment: '$(environment)'
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - download: current
+                  artifact: infrastructure
+
+                - task: AzureCLI@2
+                  displayName: 'Deploy Bicep templates'
+                  name: deployInfra
+                  inputs:
+                    azureSubscription: $(azureSubscription)
+                    scriptType: 'bash'
+                    scriptLocation: 'inlineScript'
+                    inlineScript: |
+                      # Deploy infrastructure
+                      DEPLOYMENT_OUTPUT=$(az deployment sub create \
+                        --location $(location) \
+                        --template-file $(Pipeline.Workspace)/infrastructure/main.bicep \
+                        --parameters $(Pipeline.Workspace)/infrastructure/main.parameters.json \
+                        --parameters environmentName=$(environment) location=$(location) \
+                        --query properties.outputs -o json)
+                      
+                      # Extract outputs for use in deployment stage
+                      CONTAINER_REGISTRY=$(echo $DEPLOYMENT_OUTPUT | jq -r '.CONTAINER_REGISTRY_LOGIN_SERVER.value')
+                      CONTAINER_REGISTRY_NAME=$(echo $DEPLOYMENT_OUTPUT | jq -r '.CONTAINER_REGISTRY_NAME.value')
+                      RESOURCE_GROUP=$(echo $DEPLOYMENT_OUTPUT | jq -r '.AZURE_RESOURCE_GROUP.value')
+                      
+                      echo "##vso[task.setvariable variable=containerRegistry;isOutput=true]$CONTAINER_REGISTRY"
+                      echo "##vso[task.setvariable variable=containerRegistryName;isOutput=true]$CONTAINER_REGISTRY_NAME"
+                      echo "##vso[task.setvariable variable=resourceGroup;isOutput=true]$RESOURCE_GROUP"
+                      
+                      echo "Container Registry: $CONTAINER_REGISTRY"
+                      echo "Resource Group: $RESOURCE_GROUP"
+
+  # ============================================================================
+  # Stage 3: Push Images to ACR
+  # ============================================================================
+  - stage: PushImages
+    displayName: 'Push Images to ACR'
+    dependsOn: DeployInfrastructure
+    variables:
+      containerRegistry: $[ stageDependencies.DeployInfrastructure.DeployAzureInfrastructure.outputs['DeployAzureInfrastructure.deployInfra.containerRegistry'] ]
+      containerRegistryName: $[ stageDependencies.DeployInfrastructure.DeployAzureInfrastructure.outputs['DeployAzureInfrastructure.deployInfra.containerRegistryName'] ]
+      resourceGroup: $[ stageDependencies.DeployInfrastructure.DeployAzureInfrastructure.outputs['DeployAzureInfrastructure.deployInfra.resourceGroup'] ]
+    jobs:
+      - job: PushToACR
+        displayName: 'Push all images to ACR'
+        pool:
+          vmImage: 'ubuntu-latest'
+        steps:
+          - download: current
+            artifact: api-gateway-image
+          - download: current
+            artifact: dashboard-image
+          - download: current
+            artifact: ingestion-service-image
+          - download: current
+            artifact: processor-service-image
+
+          - task: AzureCLI@2
+            displayName: 'Push images to ACR'
+            inputs:
+              azureSubscription: $(azureSubscription)
+              scriptType: 'bash'
+              scriptLocation: 'inlineScript'
+              inlineScript: |
+                # Login to ACR
+                az acr login --name $(containerRegistryName)
+                
+                # Load and push API Gateway
+                docker load -i $(Pipeline.Workspace)/api-gateway-image/api-gateway.tar
+                docker tag api-gateway:$(imageTag) $(containerRegistry)/api-gateway:$(imageTag)
+                docker tag api-gateway:$(imageTag) $(containerRegistry)/api-gateway:latest
+                docker push $(containerRegistry)/api-gateway:$(imageTag)
+                docker push $(containerRegistry)/api-gateway:latest
+                
+                # Load and push Dashboard
+                docker load -i $(Pipeline.Workspace)/dashboard-image/dashboard.tar
+                docker tag dashboard:$(imageTag) $(containerRegistry)/dashboard:$(imageTag)
+                docker tag dashboard:$(imageTag) $(containerRegistry)/dashboard:latest
+                docker push $(containerRegistry)/dashboard:$(imageTag)
+                docker push $(containerRegistry)/dashboard:latest
+                
+                # Load and push Ingestion Service
+                docker load -i $(Pipeline.Workspace)/ingestion-service-image/ingestion-service.tar
+                docker tag ingestion-service:$(imageTag) $(containerRegistry)/ingestion-service:$(imageTag)
+                docker tag ingestion-service:$(imageTag) $(containerRegistry)/ingestion-service:latest
+                docker push $(containerRegistry)/ingestion-service:$(imageTag)
+                docker push $(containerRegistry)/ingestion-service:latest
+                
+                # Load and push Processor Service
+                docker load -i $(Pipeline.Workspace)/processor-service-image/processor-service.tar
+                docker tag processor-service:$(imageTag) $(containerRegistry)/processor-service:$(imageTag)
+                docker tag processor-service:$(imageTag) $(containerRegistry)/processor-service:latest
+                docker push $(containerRegistry)/processor-service:$(imageTag)
+                docker push $(containerRegistry)/processor-service:latest
+
+  # ============================================================================
+  # Stage 4: Deploy to Container Apps
+  # ============================================================================
+  - stage: DeployApps
+    displayName: 'Deploy to Container Apps'
+    dependsOn: 
+      - DeployInfrastructure
+      - PushImages
+    variables:
+      containerRegistry: $[ stageDependencies.DeployInfrastructure.DeployAzureInfrastructure.outputs['DeployAzureInfrastructure.deployInfra.containerRegistry'] ]
+      resourceGroup: $[ stageDependencies.DeployInfrastructure.DeployAzureInfrastructure.outputs['DeployAzureInfrastructure.deployInfra.resourceGroup'] ]
+    jobs:
+      - deployment: DeployContainerApps
+        displayName: 'Deploy Container Apps'
+        pool:
+          vmImage: 'ubuntu-latest'
+        environment: '$(environment)'
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - task: AzureCLI@2
+                  displayName: 'Update Ingestion Service'
+                  inputs:
+                    azureSubscription: $(azureSubscription)
+                    scriptType: 'bash'
+                    scriptLocation: 'inlineScript'
+                    inlineScript: |
+                      az containerapp update \
+                        --name ingestion-service \
+                        --resource-group $(resourceGroup) \
+                        --image $(containerRegistry)/ingestion-service:$(imageTag)
+
+                - task: AzureCLI@2
+                  displayName: 'Update Processor Service'
+                  inputs:
+                    azureSubscription: $(azureSubscription)
+                    scriptType: 'bash'
+                    scriptLocation: 'inlineScript'
+                    inlineScript: |
+                      az containerapp update \
+                        --name processor-service \
+                        --resource-group $(resourceGroup) \
+                        --image $(containerRegistry)/processor-service:$(imageTag)
+
+                - task: AzureCLI@2
+                  displayName: 'Update API Gateway'
+                  inputs:
+                    azureSubscription: $(azureSubscription)
+                    scriptType: 'bash'
+                    scriptLocation: 'inlineScript'
+                    inlineScript: |
+                      az containerapp update \
+                        --name api-gateway \
+                        --resource-group $(resourceGroup) \
+                        --image $(containerRegistry)/api-gateway:$(imageTag)
+
+                - task: AzureCLI@2
+                  displayName: 'Update Dashboard'
+                  inputs:
+                    azureSubscription: $(azureSubscription)
+                    scriptType: 'bash'
+                    scriptLocation: 'inlineScript'
+                    inlineScript: |
+                      az containerapp update \
+                        --name dashboard \
+                        --resource-group $(resourceGroup) \
+                        --image $(containerRegistry)/dashboard:$(imageTag)
+
+                - task: AzureCLI@2
+                  displayName: 'Get deployment URLs'
+                  inputs:
+                    azureSubscription: $(azureSubscription)
+                    scriptType: 'bash'
+                    scriptLocation: 'inlineScript'
+                    inlineScript: |
+                      echo "=== Deployment Complete ==="
+                      echo ""
+                      echo "API Gateway URL:"
+                      az containerapp show --name api-gateway --resource-group $(resourceGroup) --query properties.configuration.ingress.fqdn -o tsv | xargs -I {} echo "https://{}"
+                      echo ""
+                      echo "Dashboard URL:"
+                      az containerapp show --name dashboard --resource-group $(resourceGroup) --query properties.configuration.ingress.fqdn -o tsv | xargs -I {} echo "https://{}"

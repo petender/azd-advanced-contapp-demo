@@ -1,0 +1,10 @@
+{
+  "appManagedEnvironments": "cae-",
+  "containerRegistryRegistries": "cr",
+  "documentDBDatabaseAccounts": "cosmos-",
+  "eventHubNamespaces": "evhns-",
+  "keyVaultVaults": "kv-",
+  "managedIdentityUserAssignedIdentities": "id-",
+  "operationalInsightsWorkspaces": "log-",
+  "resourcesResourceGroups": "rg-"
+}

@@ -1,0 +1,51 @@
+# Azure Developer CLI (azd) configuration
+# CloudBurst Analytics: Event-Driven Microservices with Azure Container Apps
+name: cloudburst-analytics
+metadata:
+  template: cloudburst-analytics@0.1.0
+
+# Azure resources to provision
+infra:
+  provider: bicep
+  path: infra
+
+# Services to deploy
+services:
+  # ==========================================================================
+  # Demo 1: Auto-Scaling Demo
+  # ==========================================================================
+  ingestion-service:
+    project: ./src/ingestion-service
+    language: python
+    host: containerapp
+    docker:
+      path: Dockerfile
+  
+  dashboard:
+    project: ./src/dashboard
+    language: js
+    host: containerapp
+    docker:
+      path: Dockerfile
+
+  # ==========================================================================
+  # Demo 2: Traffic Splitting Demo
+  # ==========================================================================
+  hello-api:
+    project: ./demos/traffic-splitting
+    language: js
+    host: containerapp
+    docker:
+      path: Dockerfile
+
+  # ==========================================================================
+  # Demo 3: Container Jobs
+  # Note: Jobs are deployed via Bicep modules, not as azd services
+  # The job image is built by azd and pushed to ACR
+  # ==========================================================================
+  demo-job:
+    project: ./demos/container-jobs
+    language: python
+    host: containerapp
+    docker:
+      path: Dockerfile
