@@ -190,6 +190,7 @@ module cosmosDb './modules/cosmos-db.bicep' = {
     location: location
     tags: defaultTags
     managedIdentityPrincipalId: managedIdentity.outputs.principalId
+    deployingUserPrincipalId: principalId
   }
 }
 

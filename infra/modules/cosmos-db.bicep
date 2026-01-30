@@ -13,8 +13,14 @@ param tags object = {}
 @description('Principal ID of the managed identity to grant access')
 param managedIdentityPrincipalId string = ''
 
+@description('Principal ID of the deploying user to grant read access')
+param deployingUserPrincipalId string = ''
+
 // Cosmos DB Built-in Data Contributor role (read/write data)
 var cosmosDbDataContributorRoleId = '00000000-0000-0000-0000-000000000002'
+
+// Cosmos DB Built-in Data Reader role (read-only data access)
+var cosmosDbDataReaderRoleId = '00000000-0000-0000-0000-000000000001'
 
 // ============================================================================
 // Cosmos DB Account
@@ -152,6 +158,21 @@ resource cosmosRbacRoleAssignment 'Microsoft.DocumentDB/databaseAccounts/sqlRole
   properties: {
     roleDefinitionId: '${cosmosAccount.id}/sqlRoleDefinitions/${cosmosDbDataContributorRoleId}'
     principalId: managedIdentityPrincipalId
+    scope: cosmosAccount.id
+  }
+}
+
+// ============================================================================
+// RBAC Role Assignment for Deploying User
+// Grants Cosmos DB Built-in Data Reader role for portal/explorer access
+// ============================================================================
+
+resource cosmosUserRbacRoleAssignment 'Microsoft.DocumentDB/databaseAccounts/sqlRoleAssignments@2024-11-15' = if (!empty(deployingUserPrincipalId)) {
+  name: guid(cosmosAccount.id, deployingUserPrincipalId, cosmosDbDataReaderRoleId)
+  parent: cosmosAccount
+  properties: {
+    roleDefinitionId: '${cosmosAccount.id}/sqlRoleDefinitions/${cosmosDbDataReaderRoleId}'
+    principalId: deployingUserPrincipalId
     scope: cosmosAccount.id
   }
 }
