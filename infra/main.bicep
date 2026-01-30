@@ -47,6 +47,9 @@ param principalId string = ''
 var abbrs = loadJsonContent('./abbreviations.json')
 var resourceToken = toLower(uniqueString(subscription().id, environmentName, location))
 
+// Lowercase environment name for container image references (Docker requires lowercase)
+var environmentNameLower = toLower(environmentName)
+
 var defaultTags = union(tags, {
   'azd-env-name': environmentName
   'demo-scenario': 'cloudburst-analytics'
@@ -350,7 +353,7 @@ module scheduledJob './modules/container-job.bicep' = {
     tags: union(defaultTags, { 'demo-scenario': 'container-jobs', 'job-type': 'scheduled' })
     containerAppsEnvironmentId: containerAppsEnv.outputs.id
     containerRegistryName: containerRegistry.outputs.name
-    containerImage: '${containerRegistry.outputs.loginServer}/cloudburst-analytics/demo-job-${environmentName}:latest'
+    containerImage: '${containerRegistry.outputs.loginServer}/cloudburst-analytics/demo-job-${environmentNameLower}:latest'
     triggerType: 'Schedule'
     cronExpression: '*/2 * * * *'
     parallelism: 1
@@ -371,7 +374,7 @@ module manualJob './modules/container-job.bicep' = {
     tags: union(defaultTags, { 'demo-scenario': 'container-jobs', 'job-type': 'manual' })
     containerAppsEnvironmentId: containerAppsEnv.outputs.id
     containerRegistryName: containerRegistry.outputs.name
-    containerImage: '${containerRegistry.outputs.loginServer}/cloudburst-analytics/demo-job-${environmentName}:latest'
+    containerImage: '${containerRegistry.outputs.loginServer}/cloudburst-analytics/demo-job-${environmentNameLower}:latest'
     triggerType: 'Manual'
     parallelism: 1
     env: [
@@ -391,7 +394,7 @@ module parallelJob './modules/container-job.bicep' = {
     tags: union(defaultTags, { 'demo-scenario': 'container-jobs', 'job-type': 'parallel' })
     containerAppsEnvironmentId: containerAppsEnv.outputs.id
     containerRegistryName: containerRegistry.outputs.name
-    containerImage: '${containerRegistry.outputs.loginServer}/cloudburst-analytics/demo-job-${environmentName}:latest'
+    containerImage: '${containerRegistry.outputs.loginServer}/cloudburst-analytics/demo-job-${environmentNameLower}:latest'
     triggerType: 'Manual'
     parallelism: 3
     env: [
