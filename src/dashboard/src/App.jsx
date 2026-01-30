@@ -132,30 +132,37 @@ function App() {
 
   async function simulateHeavyLoad() {
     setSimulating(true)
-    setLoadTestStatus('Starting load test...')
+    setLoadTestStatus(`Starting load test... (Target: ${INGESTION_URL})`)
     const totalEvents = 100
     const concurrentLimit = 30
     
     let inFlight = 0
     let completed = 0
+    let errors = 0
     
     const sendRequest = async () => {
       inFlight++
       try {
-        await fetch(`${INGESTION_URL}/simulate`, { 
+        const response = await fetch(`${INGESTION_URL}/simulate`, { 
           method: 'POST',
+          mode: 'cors',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             deviceId: `load-test-${Date.now()}`,
             value: Math.random() * 100
           })
         })
+        if (!response.ok) {
+          errors++
+          console.error('Request failed:', response.status)
+        }
       } catch (err) {
+        errors++
         console.error('Error:', err)
       } finally {
         inFlight--
         completed++
-        setLoadTestStatus(`Sending events: ${completed}/${totalEvents}`)
+        setLoadTestStatus(`Sending events: ${completed}/${totalEvents}${errors > 0 ? ` (${errors} errors)` : ''}`)
       }
     }
     

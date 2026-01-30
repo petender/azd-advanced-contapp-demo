@@ -3,6 +3,7 @@
 # Demonstrates: Event-driven scaling, Dapr integration, scale-to-zero
 
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from azure.eventhub.aio import EventHubConsumerClient
 from azure.identity.aio import DefaultAzureCredential, ManagedIdentityCredential
@@ -49,6 +50,15 @@ app = FastAPI(
     description="Event Hub consumer for CloudBurst Analytics",
     version="1.0.0",
     lifespan=lifespan
+)
+
+# Enable CORS for dashboard cross-origin requests
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Allow all origins for demo purposes
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 # ============================================================================

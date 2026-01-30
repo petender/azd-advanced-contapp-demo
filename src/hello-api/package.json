@@ -1,0 +1,12 @@
+{
+  "name": "hello-api",
+  "version": "1.0.0",
+  "description": "Simple API for traffic splitting demo",
+  "main": "app.js",
+  "scripts": {
+    "start": "node app.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2"
+  }
+}
